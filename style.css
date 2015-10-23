@@ -1,0 +1,14 @@
+img.toplink{
+  margin-top: 15px;
+  margin-bottom: 20px;
+  margin-right: 5px;
+
+}
+img.myleft{
+  float: left;
+}
+
+a{
+  color: #000;
+  font-weight: bold;
+}
