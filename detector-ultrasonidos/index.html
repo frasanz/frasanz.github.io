@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Detector de beacons ultrasónicos</title>
+<style>
+  /* Instrumento de escucha: fondo oscuro de osciloscopio, ámbar como único acento. */
+  :root {
+    --bg: #0c1118;
+    --panel: #131b25;
+    --line: #243040;
+    --fg: #e6edf5;
+    --mute: #8a9bb0;
+    --accent: #f0a53a;
+    --accent-ink: #1a1203;
+    --teal: #3fb6c4;
+    --warn: #e0674a;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg); font: 15px/1.5 var(--sans);
+    padding-block: 20px 48px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  main { max-width: 980px; margin: 0 auto; display: grid; gap: 16px; }
+  h1 { font-size: 1.35rem; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+  h2 { font-size: .72rem; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .09em; color: var(--mute); font-weight: 600; }
+  p { margin: 0; }
+  .lead { color: var(--mute); max-width: 62ch; margin-top: 4px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer; border-radius: 6px; padding: 10px 18px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+  }
+  button:hover { border-color: var(--mute); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.primary[aria-pressed="true"] { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .chip { font: .8rem var(--mono); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--mute); }
+  .msg { color: var(--warn); font-size: .9rem; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+
+  .scope { position: relative; background: #070a0f; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  #spec { display: block; width: 100%; height: 280px; image-rendering: pixelated; }
+  .band { position: absolute; left: 0; right: 0; border-block: 1px dashed rgba(240,165,58,.55); background: rgba(240,165,58,.06); pointer-events: none; }
+  .tick { position: absolute; right: 6px; font: .68rem var(--mono); color: var(--mute); transform: translateY(-50%); pointer-events: none; text-shadow: 0 0 3px #000; }
+  .tick::before { content: ""; position: absolute; right: 100%; margin-right: 4px; top: 50%; width: 6px; border-top: 1px solid var(--line); }
+  .idle { position: absolute; inset: 0; display: grid; place-items: center; color: var(--mute); text-align: center; padding: 16px; pointer-events: none; }
+  .scopefoot { display: flex; justify-content: space-between; font: .72rem var(--mono); color: var(--mute); padding: 6px 2px 0; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+  .val { font: 1.5rem var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .val small { font-size: .8rem; color: var(--mute); }
+  .sub { color: var(--mute); font-size: .82rem; margin-top: 2px; }
+  .meter { height: 6px; background: var(--line); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .08s linear; }
+
+  .verdict { display: grid; gap: 6px; }
+  .verdict .label { font-size: 1.15rem; font-weight: 700; }
+  .k-quiet .label { color: var(--mute); }
+  .k-cont .label { color: var(--accent); }
+  .k-rep .label { color: var(--teal); }
+  .k-blip .label { color: var(--fg); }
+
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; align-items: end; }
+  label { display: grid; gap: 6px; font-size: .85rem; color: var(--mute); }
+  label.inline { display: flex; align-items: center; gap: 8px; }
+  select, input[type=range] { width: 100%; }
+  select { font: inherit; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font: .82rem var(--mono); font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--mute); font-weight: 600; }
+  .empty { color: var(--mute); padding: 8px 0; }
+  .note { color: var(--mute); font-size: .85rem; max-width: 80ch; }
+  .note b { color: var(--fg); }
+  @media (prefers-reduced-motion: reduce) { .meter > i { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Detector de beacons ultrasónicos</h1>
+    <p class="lead">Prototipo de ciencia ciudadana. Escucha la banda de 17 a 22 kHz con el micrófono, dibuja el espectrograma y avisa si hay señales estrechas que se repiten, como las de un beacon.</p>
+  </header>
+
+  <div class="bar">
+    <button id="toggle" class="primary" aria-pressed="false">Empezar a escuchar</button>
+    <span id="state" class="chip">parado</span>
+    <span id="err" class="msg" role="alert"></span>
+  </div>
+
+  <section aria-label="Espectrograma">
+    <div class="scope" id="scope">
+      <canvas id="spec" width="720" height="260"></canvas>
+      <div class="band" id="bandbox"></div>
+      <div id="ticks"></div>
+      <div class="idle" id="idle">El espectrograma aparecerá aquí.<br>Eje vertical: frecuencia en kHz. La caja punteada es la banda analizada.</div>
+    </div>
+    <div class="scopefoot"><span>← 12 s aprox.</span><span>ahora →</span></div>
+  </section>
+
+  <section class="grid" aria-label="Medidas en vivo">
+    <div class="panel">
+      <h2>Pico en la banda</h2>
+      <div class="val"><span id="peakf">--</span> <small>kHz</small></div>
+      <div class="sub">Exceso sobre el ruido: <span id="excess">--</span> dB</div>
+      <div class="meter"><i id="meter"></i></div>
+    </div>
+    <div class="panel">
+      <h2>Micrófono</h2>
+      <div class="val"><span id="sr">--</span> <small>Hz</small></div>
+      <div class="sub" id="proc">Muestreo y procesado aún sin medir.</div>
+    </div>
+    <div class="panel verdict k-quiet" id="verdict">
+      <h2>Lectura de los últimos 12 s</h2>
+      <div class="label" id="vlabel">Sin datos</div>
+      <div class="sub" id="vdetail">Empieza a escuchar para ver una lectura.</div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Ajustes">
+    <h2>Ajustes</h2>
+    <div class="controls">
+      <label for="band">Banda analizada
+        <select id="band">
+          <option value="16000">16 a 22 kHz</option>
+          <option value="17000" selected>17 a 22 kHz</option>
+          <option value="18000">18 a 22 kHz</option>
+        </select>
+      </label>
+      <label for="thr">Umbral de detección: <b id="thrv" style="color:var(--fg)">15</b> dB sobre el ruido
+        <input id="thr" type="range" min="6" max="30" step="1" value="15">
+      </label>
+      <label class="inline" for="geo">
+        <input id="geo" type="checkbox"> Añadir ubicación aproximada (cuadrícula de unos 100 m)
+      </label>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Prueba con tono">
+    <h2>Autoprueba</h2>
+    <p class="note">Emite 15 pulsos de 19 kHz, uno por segundo. Úsalo con otro móvil o con este mismo para comprobar que se oyen. Casi nadie lo percibe, pero <b>perros, gatos y algunos niños sí</b>, así que mantén el volumen bajo y no lo uses cerca de animales.</p>
+    <div class="controls" style="margin-top:12px">
+      <label for="vol">Volumen de prueba
+        <input id="vol" type="range" min="0.02" max="0.4" step="0.01" value="0.08">
+      </label>
+      <div><button id="tonebtn">Emitir tono de prueba</button></div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Registro de eventos">
+    <div class="bar" style="justify-content:space-between; margin-bottom:8px">
+      <h2 style="margin:0">Eventos detectados</h2>
+      <div class="bar">
+        <button id="csv" disabled>Descargar CSV</button>
+        <button id="clear" disabled>Vaciar</button>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Hora</th><th>Frecuencia</th><th>Duración</th><th>Exceso</th><th>Ubicación</th></tr></thead>
+        <tbody id="log"></tbody>
+      </table>
+    </div>
+    <p class="empty" id="logempty">Aún no hay eventos. Un evento es un tramo de energía estrecha por encima del umbral.</p>
+  </section>
+
+  <p class="note"><b>Privacidad.</b> Todo se procesa en este dispositivo. No se guarda ni se envía audio, y esta página no hace ninguna conexión de red. El CSV solo contiene hora, frecuencia, duración, exceso en dB y, si lo activas, la ubicación redondeada. Detectar una señal no demuestra quién la emite: antes de atribuirla a un comercio o a una app hay que repetir la medida y verificarla con otro método.</p>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+
+  var FFT = 4096;
+  var F_LO = 15000;           // límite inferior del espectrograma
+  var WINDOW_MS = 12000;      // ventana de análisis
+  var GAP_MS = 150;           // silencio que cierra un evento
+  var MIN_EVENT_MS = 40;      // eventos más cortos se descartan
+
+  var ac = null, analyser = null, stream = null, raf = 0, running = false;
+  var db = null, binHz = 0, nyq = 24000;
+  var spec = $('spec'), sctx = spec.getContext('2d', { willReadFrequently: false });
+  var W = spec.width, H = spec.height;
+  var col = sctx.createImageData(1, H);
+
+  var inEvent = false, evStart = 0, lastActive = 0, evPeak = 0, evFreqs = [];
+  var win = [], onsets = [], events = [];
+  var pos = null, geoId = null;
+  var lastVerdict = 0, lastUi = 0;
+
+  /* ---------- utilidades ---------- */
+  function median(arr) {
+    var a = Array.prototype.slice.call(arr).sort(function (x, y) { return x - y; });
+    return a[a.length >> 1];
+  }
+  var STOPS = [[0, 8, 12, 24], [0.35, 16, 70, 92], [0.65, 230, 150, 40], [1, 255, 245, 220]];
+  function ramp(v) {
+    if (v < 0) v = 0; if (v > 1) v = 1;
+    for (var i = 1; i < STOPS.length; i++) {
+      if (v <= STOPS[i][0]) {
+        var a = STOPS[i - 1], b = STOPS[i], t = (v - a[0]) / (b[0] - a[0]);
+        return [a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t];
+      }
+    }
+    return [255, 245, 220];
+  }
+  function bandLimits() {
+    return [+$('band').value, Math.min(22000, nyq - 300)];
+  }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function clock(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); }
+  function round3(x) { return Math.round(x * 1000) / 1000; }
+
+  /* ---------- ejes ---------- */
+  function drawAxis() {
+    var fHi = nyq, span = fHi - F_LO, html = '';
+    for (var f = Math.ceil(F_LO / 1000) * 1000; f <= fHi; f += 1000) {
+      html += '<div class="tick" style="top:' + ((fHi - f) / span * 100) + '%">' + (f / 1000) + '</div>';
+    }
+    $('ticks').innerHTML = html;
+    var lim = bandLimits();
+    var box = $('bandbox');
+    box.style.top = ((fHi - lim[1]) / span * 100) + '%';
+    box.style.height = ((lim[1] - lim[0]) / span * 100) + '%';
+  }
+
+  /* ---------- bucle principal ---------- */
+  function frame() {
+    if (!running) return;
+    raf = requestAnimationFrame(frame);
+    analyser.getFloatFrequencyData(db);
+    var now = performance.now();
+    var lim = bandLimits();
+    var bLo = Math.round(lim[0] / binHz), bHi = Math.round(lim[1] / binHz);
+    var dLo = Math.round(F_LO / binHz), dHi = Math.min(db.length - 1, Math.round(nyq / binHz));
+
+    // Ruido de referencia: mediana de la banda y del rango mostrado
+    var medBand = median(db.subarray(bLo, bHi + 1));
+    var medDisp = median(db.subarray(dLo, dHi + 1));
+
+    // Pico de banda
+    var pk = bLo, pv = -Infinity;
+    for (var i = bLo; i <= bHi; i++) { if (db[i] > pv) { pv = db[i]; pk = i; } }
+    var excess = pv - medBand, pf = pk * binHz;
+
+    // Espectrograma: desplaza 1 px y dibuja una columna nueva
+    sctx.drawImage(spec, -1, 0);
+    var span = nyq - F_LO;
+    for (var y = 0; y < H; y++) {
+      var f = nyq - (y / (H - 1)) * span;
+      var b = Math.min(db.length - 1, Math.round(f / binHz));
+      var c = ramp((db[b] - medDisp) / 30);
+      var o = y * 4;
+      col.data[o] = c[0]; col.data[o + 1] = c[1]; col.data[o + 2] = c[2]; col.data[o + 3] = 255;
+    }
+    sctx.putImageData(col, W - 1, 0);
+
+    // Detección de eventos
+    var thr = +$('thr').value;
+    var active = excess >= thr;
+    win.push({ t: now, a: active, f: pf });
+    while (win.length && now - win[0].t > WINDOW_MS) win.shift();
+    while (onsets.length && now - onsets[0] > WINDOW_MS) onsets.shift();
+    if (active) {
+      lastActive = now;
+      if (!inEvent) { inEvent = true; evStart = now; evPeak = excess; evFreqs = []; onsets.push(now); }
+      if (excess > evPeak) evPeak = excess;
+      evFreqs.push(pf);
+    }
+    if (inEvent && now - lastActive > GAP_MS) endEvent();
+
+    // Interfaz (a ~12 Hz para no gastar batería)
+    if (now - lastUi > 80) {
+      lastUi = now;
+      $('peakf').textContent = (pf / 1000).toFixed(2);
+      $('excess').textContent = excess.toFixed(1);
+      $('meter').style.width = Math.max(0, Math.min(100, excess / 30 * 100)) + '%';
+    }
+    if (now - lastVerdict > 250) { lastVerdict = now; verdict(); }
+  }
+
+  function modeFreq(list) {
+    var m = {}, best = list[0], bc = 0;
+    list.forEach(function (f) {
+      var k = Math.round(f / 50) * 50;
+      m[k] = (m[k] || 0) + 1;
+      if (m[k] > bc) { bc = m[k]; best = k; }
+    });
+    return best;
+  }
+
+  function endEvent() {
+    inEvent = false;
+    var dur = lastActive - evStart;
+    if (dur < MIN_EVENT_MS) { onsets.pop(); return; }
+    events.unshift({
+      t: new Date(), f: modeFreq(evFreqs), d: Math.round(dur), x: evPeak,
+      lat: pos ? pos.lat : '', lon: pos ? pos.lon : ''
+    });
+    if (events.length > 500) events.pop();
+    renderLog();
+  }
+
+  /* ---------- lectura de la ventana ---------- */
+  function verdict() {
+    var n = win.length, el = $('verdict');
+    function set(kind, label, detail) {
+      el.className = 'panel verdict k-' + kind;
+      $('vlabel').textContent = label;
+      $('vdetail').textContent = detail;
+    }
+    if (n < 30) { set('quiet', 'Midiendo...', 'Recogiendo los primeros segundos.'); return; }
+    var act = 0, freqs = {};
+    win.forEach(function (w) {
+      if (w.a) { act++; var k = Math.round(w.f / 100) * 100; freqs[k] = (freqs[k] || 0) + 1; }
+    });
+    var duty = act / n;
+    var distinct = Object.keys(freqs).filter(function (k) { return freqs[k] >= 3; }).length;
+    var starts = onsets.length;
+    var cv = null;
+    if (starts >= 3) {
+      var iv = [];
+      for (var i = 1; i < starts; i++) iv.push(onsets[i] - onsets[i - 1]);
+      var mean = iv.reduce(function (a, b) { return a + b; }, 0) / iv.length;
+      var sd = Math.sqrt(iv.reduce(function (a, b) { return a + (b - mean) * (b - mean); }, 0) / iv.length);
+      cv = sd / mean;
+    }
+    var pct = Math.round(duty * 100) + '% del tiempo activo';
+    if (duty < 0.03 && starts === 0) {
+      set('quiet', 'Sin señal ultrasónica', 'Nada por encima del umbral en la banda.');
+    } else if (duty > 0.85 && starts <= 1) {
+      set('cont', 'Tono continuo', pct + '. Suele ser ruido electrónico (fuente de alimentación, pantalla, cargador), no un beacon.');
+    } else if (starts >= 3 && cv !== null && cv < 0.35) {
+      set('rep', 'Patrón repetitivo: candidato a beacon',
+        starts + ' pulsos con intervalo regular (cada ' + ((onsets[starts - 1] - onsets[0]) / (starts - 1) / 1000).toFixed(1) + ' s aprox.), ' +
+        distinct + ' frecuencia(s) distinta(s). Repite la medida antes de sacar conclusiones.');
+    } else {
+      set('blip', 'Actividad puntual', pct + ', ' + starts + ' inicio(s) sin ritmo claro. Puede ser ruido ocasional.');
+    }
+  }
+
+  /* ---------- registro ---------- */
+  function renderLog() {
+    var rows = events.slice(0, 100).map(function (e) {
+      return '<tr><td>' + clock(e.t) + '</td><td>' + (e.f / 1000).toFixed(2) + ' kHz</td><td>' + e.d + ' ms</td><td>' +
+        e.x.toFixed(1) + ' dB</td><td>' + (e.lat === '' ? '-' : e.lat + ', ' + e.lon) + '</td></tr>';
+    });
+    $('log').innerHTML = rows.join('');
+    $('logempty').hidden = events.length > 0;
+    $('csv').disabled = $('clear').disabled = events.length === 0;
+  }
+  $('clear').onclick = function () { events = []; renderLog(); };
+  $('csv').onclick = function () {
+    var sr = ac ? ac.sampleRate : '';
+    var lines = ['timestamp_iso,freq_hz,duration_ms,excess_db,lat,lon,sample_rate'];
+    events.slice().reverse().forEach(function (e) {
+      lines.push([e.t.toISOString(), e.f, e.d, e.x.toFixed(1), e.lat, e.lon, sr].join(','));
+    });
+    var blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'beacons-ultrasonicos.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  };
+
+  /* ---------- micrófono ---------- */
+  function setState(txt) { $('state').textContent = txt; }
+  function showErr(txt) { $('err').textContent = txt || ''; }
+
+  async function start() {
+    showErr('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showErr('Este navegador no da acceso al micrófono aquí. Abre la página desde https:// o desde localhost.');
+      return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }
+      });
+    } catch (e) {
+      showErr('No se pudo abrir el micrófono (' + (e && e.name ? e.name : 'error') + '). Revisa el permiso del navegador.');
+      return;
+    }
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    ac = new Ctx();
+    if (ac.state === 'suspended') await ac.resume();
+    var src = ac.createMediaStreamSource(stream);
+    analyser = ac.createAnalyser();
+    analyser.fftSize = FFT;
+    analyser.smoothingTimeConstant = 0.2;
+    analyser.minDecibels = -140;
+    analyser.maxDecibels = 0;
+    src.connect(analyser);
+    db = new Float32Array(analyser.frequencyBinCount);
+    binHz = ac.sampleRate / FFT;
+    nyq = ac.sampleRate / 2;
+
+    var s = stream.getAudioTracks()[0].getSettings ? stream.getAudioTracks()[0].getSettings() : {};
+    var on = [];
+    if (s.echoCancellation) on.push('cancelación de eco');
+    if (s.noiseSuppression) on.push('supresión de ruido');
+    if (s.autoGainControl) on.push('control de ganancia');
+    $('sr').textContent = ac.sampleRate;
+    $('proc').textContent = on.length
+      ? 'Aviso: el navegador mantiene ' + on.join(', ') + '. Puede tapar señales débiles.'
+      : 'Sin procesado de voz. Límite de escucha: ' + (nyq / 1000).toFixed(1) + ' kHz.';
+    if (nyq < 21000) showErr('Este micrófono muestrea a ' + ac.sampleRate + ' Hz: no llega a 21 kHz, la banda alta quedará sin cubrir.');
+
+    sctx.fillStyle = '#070a0f'; sctx.fillRect(0, 0, W, H);
+    win = []; onsets = []; inEvent = false;
+    drawAxis();
+    $('idle').hidden = true;
+    running = true;
+    $('toggle').textContent = 'Parar';
+    $('toggle').setAttribute('aria-pressed', 'true');
+    setState('escuchando');
+    raf = requestAnimationFrame(frame);
+  }
+
+  function stop() {
+    running = false;
+    cancelAnimationFrame(raf);
+    if (inEvent) endEvent();
+    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+    if (ac) ac.close();
+    stream = null; ac = null; analyser = null;
+    $('toggle').textContent = 'Empezar a escuchar';
+    $('toggle').setAttribute('aria-pressed', 'false');
+    setState('parado');
+    $('meter').style.width = '0';
+  }
+  $('toggle').onclick = function () { running ? stop() : start(); };
+  document.addEventListener('visibilitychange', function () { if (document.hidden && running) stop(); });
+
+  /* ---------- ajustes ---------- */
+  $('thr').oninput = function () { $('thrv').textContent = this.value; };
+  $('band').onchange = function () { if (running) drawAxis(); };
+  $('geo').onchange = function () {
+    var box = this;
+    if (box.checked) {
+      if (!navigator.geolocation) { box.checked = false; showErr('Este navegador no tiene geolocalización.'); return; }
+      geoId = navigator.geolocation.watchPosition(function (p) {
+        pos = { lat: round3(p.coords.latitude), lon: round3(p.coords.longitude) };
+      }, function () { box.checked = false; pos = null; showErr('No se pudo obtener la ubicación.'); },
+      { enableHighAccuracy: false, maximumAge: 30000 });
+    } else {
+      if (geoId !== null) navigator.geolocation.clearWatch(geoId);
+      geoId = null; pos = null;
+    }
+  };
+
+  /* ---------- autoprueba ---------- */
+  var tone = null;
+  $('tonebtn').onclick = function () {
+    if (tone) { tone.o.stop(); return; }
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    var c = new Ctx();
+    var o = c.createOscillator(), g = c.createGain();
+    o.frequency.value = 19000;
+    g.gain.value = 0;
+    o.connect(g); g.connect(c.destination);
+    var vol = +$('vol').value, t0 = c.currentTime + 0.1;
+    for (var i = 0; i < 15; i++) {
+      var t = t0 + i;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.01);
+      g.gain.setValueAtTime(vol, t + 0.14);
+      g.gain.linearRampToValueAtTime(0, t + 0.15);
+    }
+    o.start(t0); o.stop(t0 + 15.2);
+    tone = { o: o, c: c };
+    $('tonebtn').textContent = 'Parar tono de prueba';
+    o.onended = function () { c.close(); tone = null; $('tonebtn').textContent = 'Emitir tono de prueba'; };
+  };
+
+  renderLog();
+  drawAxis();
+})();
+</script>
+</body>
+</html>
